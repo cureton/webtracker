@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AlphaSpid Tracker with Az/El Plot</title>
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    canvas { max-width: 500px; max-height: 500px; }
+  </style>
+</head>
+<body>
+  <h1>AlphaSpid Satellite Tracker</h1>
+
+  <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
+2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
+  <button id="connect">Connect to Rotator</button>
+  <button id="start">Start Tracking</button>
+
+  <pre id="log"></pre>
+
+  <h2>Live Az/El Plot</h2>
+  <canvas id="azelChart"></canvas>
+
+  <script>
+    let port, writer, satrec, intervalId, chart;
+
+    const observerGd = {
+      latitude: satellite.degreesToRadians(-33.865143),
+      longitude: satellite.degreesToRadians(151.209900),
+      height: 0.02
+    };
+
+    document.getElementById('connect').addEventListener('click', async () => {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+
+      const encoder = new TextEncoderStream();
+      encoder.readable.pipeTo(port.writable);
+      writer = encoder.writable.getWriter();
+
+      log("Connected to serial port.");
+    });
+
+    document.getElementById('start').addEventListener('click', () => {
+      const lines = document.getElementById('tle').value.trim().split('\n');
+      if (lines.length < 2) {
+        log("Please enter 2 lines of TLE.");
+        return;
+      }
+
+      satrec = satellite.twoline2satrec(lines[0], lines[1]);
+      setupChart();
+
+      intervalId = setInterval(() => {
+        const now = new Date();
+        const gmst = satellite.gstime(now);
+        const position = satellite.propagate(satrec, now).position;
+
+        if (!position) return;
+
+        const ecf = satellite.eciToEcf(position, gmst);
+        const look = satellite.ecfToLookAngles(observerGd, ecf);
+
+        const az = satellite.radiansToDegrees(look.azimuth);
+        const el = satellite.radiansToDegrees(look.elevation);
+
+        const azCmd = Math.round(az * 10).toString().padStart(4, '0');
+        const elCmd = Math.round(el * 10).toString().padStart(3, '0');
+        const command = `W${azCmd}${elCmd}\r`;
+
+        if (writer) {
+          writer.write(command);
+          log(`${now.toLocaleTimeString()} → AZ: ${az.toFixed(1)} EL: ${el.toFixed(1)} → ${command.trim()}`);
+        }
+
+        if (el > 0) {
+          chart.data.datasets[0].data.push({ x: az, y: el });
+          chart.update();
+        }
+      }, 1000);
+    });
+
+    function log(msg) {
+      const el = document.getElementById('log');
+      el.textContent += msg + '\n';
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function setupChart() {
+      const ctx = document.getElementById('azelChart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Satellite Track',
+            data: [],
+            showLine: true,
+            borderWidth: 1,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            r: {
+              type: 'radialLinear',
+              min: 0,
+              max: 90,
+              ticks: { stepSize: 15 },
+              pointLabels: {
+                callback: (value, index) => `${value}°`
+              }
+            },
+            x: { display: false },
+            y: { display: false }
+          },
+          parsing: {
+            xAxisKey: 'x',
+            yAxisKey: 'y'
+          },
+          aspectRatio: 1,
+        }
+      });
+    }
+  </script>
+</body>
+</html>
