@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<html><!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -89,13 +88,15 @@
       }
 
       map = L.map('map').setView([0, 0], 2);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: 'Map data © OpenStreetMap contributors'
+      L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: 'Map data © Google'
       }).addTo(map);
 
       footprintMap = L.map('footprintMap').setView([0, 0], 2);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: 'Map data © OpenStreetMap contributors'
+      L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: 'Map data © Google'
       }).addTo(footprintMap);
 
       const ctx = document.getElementById('azelChart').getContext('2d');
@@ -259,7 +260,8 @@
             log('Cannot compute prediction: satrec or mean motion is invalid.');
             return;
           }
-          const orbitMinutes = 1440 / satrec.no;
+          const meanMotionRevsPerDay = satrec.no * 1440 / (2 * Math.PI);
+          const orbitMinutes = 1440 / meanMotionRevsPerDay;
           const orbitCount = Math.min(Math.max(parseInt(document.getElementById('orbitCount').value) || 1, 1), 5);
           const totalSeconds = orbitMinutes * 60 * orbitCount;
           const steps = Math.floor(totalSeconds / stepSeconds);
@@ -281,256 +283,6 @@
           log('Error parsing TLE: ' + err);
         }
       });
-    });
-  </script>
-</body>
-</html>
-
-
-<head>
-  <meta charset="UTF-8">
-  <title>AlphaSpid Satellite Tracker</title>
-  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    body { font-family: sans-serif; }
-    canvas { max-width: 500px; max-height: 500px; }
-    #map, #footprintMap { height: 400px; width: 100%; margin-top: 10px; }
-    #log { white-space: pre-wrap; height: 150px; overflow-y: scroll; background: #eee; padding: 0.5em; }
-    .aos-icon, .los-icon {
-      font-weight: bold;
-      font-size: 14px;
-      color: white;
-      padding: 2px 6px;
-      border-radius: 4px;
-      box-shadow: 0 0 4px rgba(0,0,0,0.5);
-      pointer-events: none;
-      user-select: none;
-    }
-    .aos-icon { background-color: green; }
-    .los-icon { background-color: red; }
-    .map-container {
-      display: table;
-      width: 100%;
-    }
-    .map-cell {
-      display: table-cell;
-      width: 50%;
-      vertical-align: top;
-      padding-right: 10px;
-    }
-  </style>
-</head>
-<body>
-  <h1>AlphaSpid Satellite Tracker</h1>
-
-  <h2>Enter TLE</h2>
-  <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
-2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
-  <label>Orbits to predict: <input type="number" id="orbitCount" min="1" max="5" value="1" /></label><br>
-  <button id="connect">Connect to Rotator</button>
-  <button id="start">Start Tracking</button>
-
-  <h2>Observer Location</h2>
-  <div>
-    <label>Latitude: <input type="number" step="any" id="latInput"></label>
-    <label>Longitude: <input type="number" step="any" id="lonInput"></label>
-    <button id="setLocation">Set Location</button>
-  </div>
-
-  <h2>Status Log</h2>
-  <pre id="log"></pre>
-
-  <h2>Az/El Plot</h2>
-  <canvas id="azelChart"></canvas>
-
-  <h2>Maps</h2>
-  <div class="map-container">
-    <div class="map-cell">
-      <h3>Ground Track</h3>
-      <div id="map"></div>
-    </div>
-    <div class="map-cell">
-      <h3>Satellite Footprint</h3>
-      <div id="footprintMap"></div>
-    </div>
-  </div>
-
-  <script>
-    let port, writer, satrec, intervalId, chart, map, footprintMap;
-    let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
-    let aosMarker, losMarker, predictionLine, footprintTrailLine;
-    let lastElevation = null;
-    const trailCoords = [];
-    const footprintTrailCoords = [];
-    const observerGd = { latitude: 0, longitude: 0, height: 0.02 };
-
-    function log(msg) {
-      const el = document.getElementById('log');
-      el.textContent += msg + '\n';
-      el.scrollTop = el.scrollHeight;
-    }
-
-    function setupTrackingLoop() {
-      clearInterval(intervalId);
-      intervalId = setInterval(() => {
-        const now = new Date();
-        const gmst = satellite.gstime(now);
-        const posVel = satellite.propagate(satrec, now);
-        if (!posVel.position) return;
-
-        const geo = satellite.eciToGeodetic(posVel.position, gmst);
-        const lat = satellite.degreesLat(geo.latitude);
-        const lon = satellite.degreesLong(geo.longitude);
-
-        trailCoords.push([lat, lon]);
-        if (trailCoords.length > 200) trailCoords.shift();
-        if (trailLine) map.removeLayer(trailLine);
-        trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
-
-        footprintTrailCoords.push([lat, lon]);
-        if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
-        if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
-        footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
-
-        const altitude = geo.height;
-        const earthRadius = 6371;
-        const minElevationRad = 0;
-        const angularRadius = Math.acos((earthRadius / (earthRadius + altitude)) * Math.cos(minElevationRad));
-        const footprintRadiusKm = earthRadius * angularRadius;
-
-        if (!subpointMarker) {
-          subpointMarker = L.circleMarker([lat, lon], { radius: 4, color: 'purple', fillColor: 'violet', fillOpacity: 0.9 }).addTo(footprintMap);
-        } else {
-          subpointMarker.setLatLng([lat, lon]);
-        }
-
-        if (footprintCircle) {
-          footprintCircle.setLatLng([lat, lon]);
-          footprintCircle.setRadius(footprintRadiusKm * 1000);
-        } else {
-          footprintCircle = L.circle([lat, lon], {
-            radius: footprintRadiusKm * 1000,
-            color: 'purple', fillColor: 'purple', fillOpacity: 0.2
-          }).addTo(footprintMap);
-        }
-
-        const lookAngles = satellite.ecfToLookAngles(observerGd, satellite.eciToEcf(posVel.position, gmst));
-        const az = satellite.radiansToDegrees(lookAngles.azimuth);
-        const el = satellite.radiansToDegrees(lookAngles.elevation);
-
-        const azCmd = Math.round(az * 10).toString().padStart(4, '0');
-        const elCmd = Math.round(el * 10).toString().padStart(3, '0');
-        const command = `W${azCmd}${elCmd}\r`;
-        if (writer) writer.write(command);
-
-        const justAOS = lastElevation !== null && lastElevation <= 0 && el > 0;
-        const justLOS = lastElevation !== null && lastElevation > 0 && el <= 0;
-        lastElevation = el;
-
-        if (justAOS) {
-          if (aosMarker) map.removeLayer(aosMarker);
-          aosMarker = L.marker([lat, lon], {
-            icon: L.divIcon({ className: 'aos-icon', html: 'AOS', iconAnchor: [0, 0] })
-          }).addTo(map);
-          log(`AOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
-        }
-
-        if (justLOS) {
-          if (losMarker) map.removeLayer(losMarker);
-          losMarker = L.marker([lat, lon], {
-            icon: L.divIcon({ className: 'los-icon', html: 'LOS', iconAnchor: [0, 0] })
-          }).addTo(map);
-          log(`LOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
-        }
-
-        if (el > 0) {
-          chart.data.datasets[0].data.push({ x: az, y: el });
-          chart.update();
-        }
-      }, 1000);
-    }
-
-    map = L.map('map').setView([0, 0], 2);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: 'Map data © OpenStreetMap contributors'
-    }).addTo(map);
-
-    footprintMap = L.map('footprintMap').setView([0, 0], 2);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: 'Map data © OpenStreetMap contributors'
-    }).addTo(footprintMap);
-
-    const ctx = document.getElementById('azelChart').getContext('2d');
-    chart = new Chart(ctx, {
-      type: 'scatter',
-      data: {
-        datasets: [{
-          label: 'Satellite Track',
-          data: [],
-          showLine: true,
-          borderColor: 'blue',
-          borderWidth: 1,
-          pointRadius: 2
-        }]
-      },
-      options: {
-        scales: {
-          x: { type: 'linear', min: 0, max: 360, title: { display: true, text: 'Azimuth (°)' } },
-          y: { type: 'linear', min: 0, max: 90, title: { display: true, text: 'Elevation (°)' } }
-        }
-      }
-    });
-
-    document.getElementById('connect').addEventListener('click', async () => {
-      try {
-        port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 9600 });
-        const encoder = new TextEncoderStream();
-        encoder.readable.pipeTo(port.writable);
-        writer = encoder.writable.getWriter();
-        log('Serial port connected');
-      } catch (err) {
-        log('Serial port error: ' + err);
-      }
-    });
-
-    document.getElementById('setLocation').addEventListener('click', () => {
-      const lat = parseFloat(document.getElementById('latInput').value);
-      const lon = parseFloat(document.getElementById('lonInput').value);
-      if (!isNaN(lat) && !isNaN(lon)) {
-        observerGd.latitude = satellite.degreesToRadians(lat);
-        observerGd.longitude = satellite.degreesToRadians(lon);
-        log(`Observer location manually set to ${lat}, ${lon}`);
-      }
-    });
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        observerGd.latitude = satellite.degreesToRadians(pos.coords.latitude);
-        observerGd.longitude = satellite.degreesToRadians(pos.coords.longitude);
-        log(`Observer location auto-set to ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-        document.getElementById('latInput').value = pos.coords.latitude.toFixed(4);
-        document.getElementById('lonInput').value = pos.coords.longitude.toFixed(4);
-      },
-      () => log('Geolocation permission denied. Please set location manually.')
-    );
-
-    document.getElementById('start').addEventListener('click', () => {
-      const tleText = document.getElementById('tle').value.trim().split('\n');
-      if (tleText.length < 2) {
-        log('Please enter a valid 2-line TLE');
-        return;
-      }
-      try {
-        satrec = satellite.twoline2satrec(tleText[0], tleText[1]);
-        setupTrackingLoop();
-        log('Tracking started');
-      } catch (err) {
-        log('Error parsing TLE: ' + err);
-      }
     });
   </script>
 </body>
