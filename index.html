@@ -82,17 +82,20 @@
     // ... [rest of JS code remains unchanged until trail update section]
 
     // Add to your setInterval() inside the tracking update function:
-    trailCoords.push([lat, lon]);
-    if (trailCoords.length > 200) trailCoords.shift();
-    if (trailLine) map.removeLayer(trailLine);
-    trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
+const lat = satellite.degreesLat(geo.latitude);
+const lon = satellite.degreesLong(geo.longitude);
 
-    footprintTrailCoords.push([lat, lon]);
-    if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
-    if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
-    footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
+trailCoords.push([lat, lon]);
+if (trailCoords.length > 200) trailCoords.shift();
+if (trailLine) map.removeLayer(trailLine);
+trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
 
-    // ... [rest of JS code continues unchanged]
+footprintTrailCoords.push([lat, lon]);
+if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
+if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
+footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
+
+// ... [rest of JS code continues unchanged]
   </script>
 </body>
 </html>
