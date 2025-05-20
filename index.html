@@ -165,92 +165,86 @@
         }
       }, 1000);
     }
-  // Initialize maps
-map = L.map('map').setView([0, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: 'Map data © OpenStreetMap contributors'
-}).addTo(map);
 
-footprintMap = L.map('footprintMap').setView([0, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: 'Map data © OpenStreetMap contributors'
-}).addTo(footprintMap);
+    map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data © OpenStreetMap contributors'
+    }).addTo(map);
 
-// Setup Chart.js Az/El plot
-const ctx = document.getElementById('azelChart').getContext('2d');
-chart = new Chart(ctx, {
-  type: 'scatter',
-  data: {
-    datasets: [{
-      label: 'Satellite Track',
-      data: [],
-      showLine: true,
-      borderColor: 'blue',
-      borderWidth: 1,
-      pointRadius: 2
-    }]
-  },
-  options: {
-    scales: {
-      x: { type: 'linear', min: 0, max: 360, title: { display: true, text: 'Azimuth (°)' } },
-      y: { type: 'linear', min: 0, max: 90, title: { display: true, text: 'Elevation (°)' } }
-    }
-  }
-});
+    footprintMap = L.map('footprintMap').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data © OpenStreetMap contributors'
+    }).addTo(footprintMap);
 
-// Serial connect
-document.getElementById('connect').addEventListener('click', async () => {
-  try {
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 9600 });
-    const encoder = new TextEncoderStream();
-    encoder.readable.pipeTo(port.writable);
-    writer = encoder.writable.getWriter();
-    log('Serial port connected');
-  } catch (err) {
-    log('Serial port error: ' + err);
-  }
-});
+    const ctx = document.getElementById('azelChart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: 'Satellite Track',
+          data: [],
+          showLine: true,
+          borderColor: 'blue',
+          borderWidth: 1,
+          pointRadius: 2
+        }]
+      },
+      options: {
+        scales: {
+          x: { type: 'linear', min: 0, max: 360, title: { display: true, text: 'Azimuth (°)' } },
+          y: { type: 'linear', min: 0, max: 90, title: { display: true, text: 'Elevation (°)' } }
+        }
+      }
+    });
 
-// Manual location set
-document.getElementById('setLocation').addEventListener('click', () => {
-  const lat = parseFloat(document.getElementById('latInput').value);
-  const lon = parseFloat(document.getElementById('lonInput').value);
-  if (!isNaN(lat) && !isNaN(lon)) {
-    observerGd.latitude = satellite.degreesToRadians(lat);
-    observerGd.longitude = satellite.degreesToRadians(lon);
-    log(`Observer location manually set to ${lat}, ${lon}`);
-  }
-});
+    document.getElementById('connect').addEventListener('click', async () => {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        const encoder = new TextEncoderStream();
+        encoder.readable.pipeTo(port.writable);
+        writer = encoder.writable.getWriter();
+        log('Serial port connected');
+      } catch (err) {
+        log('Serial port error: ' + err);
+      }
+    });
 
-// Auto-detect observer location
-navigator.geolocation.getCurrentPosition(
-  (pos) => {
-    observerGd.latitude = satellite.degreesToRadians(pos.coords.latitude);
-    observerGd.longitude = satellite.degreesToRadians(pos.coords.longitude);
-    log(`Observer location auto-set to ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-    document.getElementById('latInput').value = pos.coords.latitude.toFixed(4);
-    document.getElementById('lonInput').value = pos.coords.longitude.toFixed(4);
-  },
-  () => log('Geolocation permission denied. Please set location manually.')
-);
+    document.getElementById('setLocation').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('latInput').value);
+      const lon = parseFloat(document.getElementById('lonInput').value);
+      if (!isNaN(lat) && !isNaN(lon)) {
+        observerGd.latitude = satellite.degreesToRadians(lat);
+        observerGd.longitude = satellite.degreesToRadians(lon);
+        log(`Observer location manually set to ${lat}, ${lon}`);
+      }
+    });
 
-// Start tracking
-document.getElementById('start').addEventListener('click', () => {
-  const tleText = document.getElementById('tle').value.trim().split('
-');
-  if (tleText.length < 2) {
-    log('Please enter a valid 2-line TLE');
-    return;
-  }
-  try {
-    satrec = satellite.twoline2satrec(tleText[0], tleText[1]);
-    setupTrackingLoop();
-    log('Tracking started');
-  } catch (err) {
-    log('Error parsing TLE: ' + err);
-  }
-});
-</script>
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        observerGd.latitude = satellite.degreesToRadians(pos.coords.latitude);
+        observerGd.longitude = satellite.degreesToRadians(pos.coords.longitude);
+        log(`Observer location auto-set to ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
+        document.getElementById('latInput').value = pos.coords.latitude.toFixed(4);
+        document.getElementById('lonInput').value = pos.coords.longitude.toFixed(4);
+      },
+      () => log('Geolocation permission denied. Please set location manually.')
+    );
+
+    document.getElementById('start').addEventListener('click', () => {
+      const tleText = document.getElementById('tle').value.trim().split('\n');
+      if (tleText.length < 2) {
+        log('Please enter a valid 2-line TLE');
+        return;
+      }
+      try {
+        satrec = satellite.twoline2satrec(tleText[0], tleText[1]);
+        setupTrackingLoop();
+        log('Tracking started');
+      } catch (err) {
+        log('Error parsing TLE: ' + err);
+      }
+    });
+  </script>
 </body>
 </html>
