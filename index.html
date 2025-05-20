@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>AlphaSpid Tracker with Az/El Plot</title>
+  <title>AlphaSpid Tracker with Az/El and Map</title>
   <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     canvas { max-width: 500px; max-height: 500px; }
+    #map { height: 400px; width: 100%; }
   </style>
 </head>
 <body>
@@ -21,14 +24,32 @@
   <h2>Live Az/El Plot</h2>
   <canvas id="azelChart"></canvas>
 
+  <h2>Live Ground Track</h2>
+  <div id="map"></div>
+
   <script>
-    let port, writer, satrec, intervalId, chart;
+    let port, writer, satrec, intervalId, chart, map, satMarker, trailLine;
+    const trailCoords = [];
 
     const observerGd = {
       latitude: satellite.degreesToRadians(-33.865143),
       longitude: satellite.degreesToRadians(151.209900),
       height: 0.02
     };
+
+    // Initialize map
+    map = L.map('map').setView([-33.865, 151.209], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map &copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Observer marker
+    const observerMarker = L.circleMarker([-33.865143, 151.209900], {
+      radius: 5,
+      color: 'red',
+      fillColor: '#f03',
+      fillOpacity: 0.8
+    }).addTo(map).bindPopup("Observer");
 
     document.getElementById('connect').addEventListener('click', async () => {
       port = await navigator.serial.requestPort();
@@ -54,12 +75,11 @@
       intervalId = setInterval(() => {
         const now = new Date();
         const gmst = satellite.gstime(now);
-        const position = satellite.propagate(satrec, now).position;
+        const posVel = satellite.propagate(satrec, now);
+        if (!posVel.position) return;
 
-        if (!position) return;
-
-        const ecf = satellite.eciToEcf(position, gmst);
-        const look = satellite.ecfToLookAngles(observerGd, ecf);
+        const look = satellite.ecfToLookAngles(observerGd,
+                      satellite.eciToEcf(posVel.position, gmst));
 
         const az = satellite.radiansToDegrees(look.azimuth);
         const el = satellite.radiansToDegrees(look.elevation);
@@ -73,10 +93,32 @@
           log(`${now.toLocaleTimeString()} → AZ: ${az.toFixed(1)} EL: ${el.toFixed(1)} → ${command.trim()}`);
         }
 
+        // Plot Az/El
         if (el > 0) {
           chart.data.datasets[0].data.push({ x: az, y: el });
           chart.update();
         }
+
+        // Compute satellite ground position
+        const geodetic = satellite.eciToGeodetic(posVel.position, gmst);
+        const satLat = satellite.degreesLat(geodetic.latitude);
+        const satLng = satellite.degreesLong(geodetic.longitude);
+
+        // Update map
+        if (!satMarker) {
+          satMarker = L.circleMarker([satLat, satLng], {
+            radius: 4, color: 'blue', fillColor: 'cyan', fillOpacity: 0.9
+          }).addTo(map).bindPopup("Satellite");
+        } else {
+          satMarker.setLatLng([satLat, satLng]);
+        }
+
+        trailCoords.push([satLat, satLng]);
+        if (trailCoords.length > 200) trailCoords.shift();
+
+        if (trailLine) map.removeLayer(trailLine);
+        trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
+
       }, 1000);
     });
 
@@ -111,7 +153,7 @@
               max: 90,
               ticks: { stepSize: 15 },
               pointLabels: {
-                callback: (value, index) => `${value}°`
+                callback: (value) => `${value}°`
               }
             },
             x: { display: false },
