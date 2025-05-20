@@ -1,71 +1,115 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>AlphaSpid Tracker with Az/El and Map</title>
+  <meta charset="UTF-8">
+  <title>AlphaSpid Satellite Tracker</title>
   <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
+    body { font-family: sans-serif; }
     canvas { max-width: 500px; max-height: 500px; }
-    #map { height: 400px; width: 100%; }
+    #map { height: 400px; width: 100%; margin-top: 10px; }
+    #log { white-space: pre-wrap; height: 150px; overflow-y: scroll; background: #eee; padding: 0.5em; }
   </style>
 </head>
 <body>
   <h1>AlphaSpid Satellite Tracker</h1>
 
+  <h2>Enter TLE</h2>
   <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
 2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
   <button id="connect">Connect to Rotator</button>
   <button id="start">Start Tracking</button>
 
+  <h2>Observer Location</h2>
+  <div>
+    <label>Latitude: <input type="number" step="any" id="latInput"></label>
+    <label>Longitude: <input type="number" step="any" id="lonInput"></label>
+    <button id="setLocation">Set Location</button>
+  </div>
+
+  <h2>Status Log</h2>
   <pre id="log"></pre>
 
-  <h2>Live Az/El Plot</h2>
+  <h2>Az/El Plot</h2>
   <canvas id="azelChart"></canvas>
 
-  <h2>Live Ground Track</h2>
+  <h2>Ground Track</h2>
   <div id="map"></div>
 
   <script>
-    let port, writer, satrec, intervalId, chart, map, satMarker, trailLine;
+    let port, writer, satrec, intervalId, chart, map;
+    let satMarker, trailLine, observerMarker;
     const trailCoords = [];
 
-    const observerGd = {
-      latitude: satellite.degreesToRadians(-33.865143),
-      longitude: satellite.degreesToRadians(151.209900),
-      height: 0.02
-    };
+    let observerGd = { latitude: 0, longitude: 0, height: 0.02 };
 
-    // Initialize map
-    map = L.map('map').setView([-33.865, 151.209], 2);
+    // Setup map
+    map = L.map('map').setView([0, 0], 2);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: 'Map &copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Observer marker
-    const observerMarker = L.circleMarker([-33.865143, 151.209900], {
-      radius: 5,
-      color: 'red',
-      fillColor: '#f03',
-      fillOpacity: 0.8
-    }).addTo(map).bindPopup("Observer");
+    function log(msg) {
+      const el = document.getElementById('log');
+      el.textContent += msg + '\n';
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function setObserverLocation(lat, lon) {
+      observerGd.latitude = satellite.degreesToRadians(lat);
+      observerGd.longitude = satellite.degreesToRadians(lon);
+
+      if (observerMarker) {
+        observerMarker.setLatLng([lat, lon]);
+      } else {
+        observerMarker = L.circleMarker([lat, lon], {
+          radius: 5,
+          color: 'red',
+          fillColor: '#f03',
+          fillOpacity: 0.8
+        }).addTo(map).bindPopup("Observer");
+      }
+
+      map.setView([lat, lon], 4);
+      log(`Observer location set to: ${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+      document.getElementById('latInput').value = lat.toFixed(6);
+      document.getElementById('lonInput').value = lon.toFixed(6);
+    }
+
+    document.getElementById('setLocation').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('latInput').value);
+      const lon = parseFloat(document.getElementById('lonInput').value);
+      if (isNaN(lat) || isNaN(lon)) {
+        log("Invalid manual coordinates");
+        return;
+      }
+      setObserverLocation(lat, lon);
+    });
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setObserverLocation(pos.coords.latitude, pos.coords.longitude),
+      () => {
+        log("Geolocation failed or denied. Please enter manually.");
+        setObserverLocation(-33.865143, 151.209900);
+      }
+    );
 
     document.getElementById('connect').addEventListener('click', async () => {
       port = await navigator.serial.requestPort();
       await port.open({ baudRate: 9600 });
-
       const encoder = new TextEncoderStream();
       encoder.readable.pipeTo(port.writable);
       writer = encoder.writable.getWriter();
-
       log("Connected to serial port.");
     });
 
     document.getElementById('start').addEventListener('click', () => {
       const lines = document.getElementById('tle').value.trim().split('\n');
       if (lines.length < 2) {
-        log("Please enter 2 lines of TLE.");
+        log("Please enter a full 2-line TLE");
         return;
       }
 
@@ -93,40 +137,29 @@
           log(`${now.toLocaleTimeString()} → AZ: ${az.toFixed(1)} EL: ${el.toFixed(1)} → ${command.trim()}`);
         }
 
-        // Plot Az/El
         if (el > 0) {
           chart.data.datasets[0].data.push({ x: az, y: el });
           chart.update();
         }
 
-        // Compute satellite ground position
-        const geodetic = satellite.eciToGeodetic(posVel.position, gmst);
-        const satLat = satellite.degreesLat(geodetic.latitude);
-        const satLng = satellite.degreesLong(geodetic.longitude);
+        const geo = satellite.eciToGeodetic(posVel.position, gmst);
+        const satLat = satellite.degreesLat(geo.latitude);
+        const satLon = satellite.degreesLong(geo.longitude);
 
-        // Update map
         if (!satMarker) {
-          satMarker = L.circleMarker([satLat, satLng], {
+          satMarker = L.circleMarker([satLat, satLon], {
             radius: 4, color: 'blue', fillColor: 'cyan', fillOpacity: 0.9
           }).addTo(map).bindPopup("Satellite");
         } else {
-          satMarker.setLatLng([satLat, satLng]);
+          satMarker.setLatLng([satLat, satLon]);
         }
 
-        trailCoords.push([satLat, satLng]);
+        trailCoords.push([satLat, satLon]);
         if (trailCoords.length > 200) trailCoords.shift();
-
         if (trailLine) map.removeLayer(trailLine);
         trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
-
       }, 1000);
     });
-
-    function log(msg) {
-      const el = document.getElementById('log');
-      el.textContent += msg + '\n';
-      el.scrollTop = el.scrollHeight;
-    }
 
     function setupChart() {
       const ctx = document.getElementById('azelChart').getContext('2d');
@@ -143,18 +176,14 @@
         },
         options: {
           responsive: false,
-          plugins: {
-            legend: { display: false }
-          },
+          plugins: { legend: { display: false } },
           scales: {
             r: {
               type: 'radialLinear',
               min: 0,
               max: 90,
               ticks: { stepSize: 15 },
-              pointLabels: {
-                callback: (value) => `${value}°`
-              }
+              pointLabels: { callback: (value) => `${value}°` }
             },
             x: { display: false },
             y: { display: false }
