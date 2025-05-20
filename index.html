@@ -10,7 +10,18 @@
   <style>
     body { font-family: sans-serif; }
     canvas { max-width: 500px; max-height: 500px; }
-    #map, #footprintMap { height: 400px; width: 100%; margin-top: 10px; }
+    #map { height: 400px; width: 100%; margin-top: 10px; }
+    #footprintMap {
+      height: 350px;
+      width: 350px;
+      position: absolute;
+      top: calc(10px - 70px); /* 20% of 350px = 70px higher */
+      right: 10px;
+      z-index: 1000;
+      border: 2px solid #444;
+      background-color: #000;
+      box-shadow: 0 0 8px rgba(255,255,255,0.8);
+    }
     #log { white-space: pre-wrap; height: 150px; overflow-y: scroll; background: #eee; padding: 0.5em; }
     .aos-icon, .los-icon {
       font-weight: bold;
@@ -25,14 +36,8 @@
     .aos-icon { background-color: green; }
     .los-icon { background-color: red; }
     .map-container {
-      display: table;
+      position: relative;
       width: 100%;
-    }
-    .map-cell {
-      display: table-cell;
-      width: 50%;
-      vertical-align: top;
-      padding-right: 10px;
     }
   </style>
 </head>
@@ -59,16 +64,10 @@
   <h2>Az/El Plot</h2>
   <canvas id="azelChart"></canvas>
 
-  <h2>Maps</h2>
+  <h2>Map</h2>
   <div class="map-container">
-    <div class="map-cell">
-      <h3>Ground Track</h3>
-      <div id="map"></div>
-    </div>
-    <div class="map-cell">
-      <h3>Satellite Footprint</h3>
-      <div id="footprintMap"></div>
-    </div>
+    <div id="map"></div>
+    <div id="footprintMap"></div>
   </div>
 
   <script>
@@ -93,7 +92,15 @@
         attribution: 'Map data © Google'
       }).addTo(map);
 
-      footprintMap = L.map('footprintMap').setView([0, 0], 2);
+      footprintMap = L.map('footprintMap', {
+        zoomControl: false,
+        attributionControl: false,
+        dragging: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false
+      }).setView([0, 0], 3);
       L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
         subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
         attribution: 'Map data © Google'
@@ -154,6 +161,8 @@
           if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
           if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
           footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
+
+          footprintMap.setView([lat, lon]);
 
           const altitude = geo.height;
           const earthRadius = 6371;
