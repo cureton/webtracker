@@ -3,29 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>AlphaSpid Satellite Tracker</title>
-  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js">document.getElementById('setLocation').addEventListener('click', () => {
-        const lat = parseFloat(document.getElementById('latInput').value);
-        const lon = parseFloat(document.getElementById('lonInput').value);
-        if (!isNaN(lat) && !isNaN(lon)) {
-          observerGd.latitude = lat;
-          observerGd.longitude = lon;
-          map.setView([lat, lon], 5);
-          if (homeMarker) map.removeLayer(homeMarker);
-          homeMarker = L.marker([lat, lon], {
-            title: 'Home',
-            icon: L.icon({
-              iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
-              iconSize: [24, 24],
-              iconAnchor: [12, 24],
-              popupAnchor: [0, -24]
-            })
-          }).addTo(map).bindPopup('Observer Home Location').openPopup();
-          log(`Manual location set to: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
-        } else {
-          log('Invalid coordinates entered.');
-        }
-      });
-</script>
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -88,9 +66,10 @@
   </div>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      let port, writer, satrec, intervalId, chart, map, footprintMap, satelliteMarker;
-      let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
-      let aosMarker, losMarker, predictionLine, footprintTrailLine, homeMarker;
+      let port, writer, satrec, intervalId, chart, map, footprintMap;
+      let satelliteMarker, observerMarker, homeMarker;
+      let trailLine, footprintCircle, subpointMarker;
+      let aosMarker, losMarker, predictionLine, footprintTrailLine;
       let lastElevation = null;
       const trailCoords = [];
       const footprintTrailCoords = [];
@@ -152,6 +131,12 @@
           map.setView([lat, lon], 5);
           observerGd.latitude = lat;
           observerGd.longitude = lon;
+          observerMarker = L.circleMarker([lat, lon], {
+            radius: 6,
+            color: 'blue',
+            fillColor: 'pink',
+            fillOpacity: 0.9
+          }).addTo(map).bindPopup('Observer Location');
           homeMarker = L.marker([lat, lon], {
             title: 'Home',
             icon: L.icon({
@@ -168,6 +153,36 @@
       } else {
         log('Geolocation not supported by this browser.');
       }
+
+      document.getElementById('setLocation').addEventListener('click', () => {
+        const lat = parseFloat(document.getElementById('latInput').value);
+        const lon = parseFloat(document.getElementById('lonInput').value);
+        if (!isNaN(lat) && !isNaN(lon)) {
+          observerGd.latitude = lat;
+          observerGd.longitude = lon;
+          if (observerMarker) map.removeLayer(observerMarker);
+          observerMarker = L.circleMarker([lat, lon], {
+            radius: 6,
+            color: 'blue',
+            fillColor: 'pink',
+            fillOpacity: 0.9
+          }).addTo(map).bindPopup('Observer Location');
+          map.setView([lat, lon], 5);
+          if (homeMarker) map.removeLayer(homeMarker);
+          homeMarker = L.marker([lat, lon], {
+            title: 'Home',
+            icon: L.icon({
+              iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
+              iconSize: [24, 24],
+              iconAnchor: [12, 24],
+              popupAnchor: [0, -24]
+            })
+          }).addTo(map).bindPopup('Observer Home Location').openPopup();
+          log(`Manual location set to: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+        } else {
+          log('Invalid coordinates entered.');
+        }
+      });
 
       function unwrapLongitudesPerOrbit(coords) {
         let adjusted = [];
