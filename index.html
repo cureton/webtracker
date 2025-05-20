@@ -72,6 +72,22 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          document.getElementById('latInput').value = lat.toFixed(6);
+          document.getElementById('lonInput').value = lon.toFixed(6);
+          map.setView([lat, lon], 5);
+          observerGd.latitude = lat;
+          observerGd.longitude = lon;
+          log(`Using browser location: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+        }, err => {
+          log('Geolocation error: ' + err.message);
+        });
+      } else {
+        log('Geolocation not supported by this browser.');
+      }
       let port, writer, satrec, intervalId, chart, map, footprintMap;
       let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
       let aosMarker, losMarker, predictionLine, footprintTrailLine;
