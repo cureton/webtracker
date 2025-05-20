@@ -3,7 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <title>AlphaSpid Satellite Tracker</title>
-  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js">document.getElementById('setLocation').addEventListener('click', () => {
+        const lat = parseFloat(document.getElementById('latInput').value);
+        const lon = parseFloat(document.getElementById('lonInput').value);
+        if (!isNaN(lat) && !isNaN(lon)) {
+          observerGd.latitude = lat;
+          observerGd.longitude = lon;
+          map.setView([lat, lon], 5);
+          if (homeMarker) map.removeLayer(homeMarker);
+          homeMarker = L.marker([lat, lon], {
+            title: 'Home',
+            icon: L.icon({
+              iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
+              iconSize: [24, 24],
+              iconAnchor: [12, 24],
+              popupAnchor: [0, -24]
+            })
+          }).addTo(map).bindPopup('Observer Home Location').openPopup();
+          log(`Manual location set to: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+        } else {
+          log('Invalid coordinates entered.');
+        }
+      });
+</script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -15,7 +37,7 @@
       height: 350px;
       width: 350px;
       position: absolute;
-      top: calc(10px - 70px); /* 20% of 350px = 70px higher */
+      top: calc(10px - 70px);
       right: 10px;
       z-index: 1000;
       border: 2px solid #444;
@@ -43,54 +65,32 @@
 </head>
 <body>
   <h1>AlphaSpid Satellite Tracker</h1>
-
   <h2>Enter TLE</h2>
   <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
 2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
   <label>Orbits to predict: <input type="number" id="orbitCount" min="1" max="5" value="1" /></label><br>
   <button id="connect">Connect to Rotator</button>
   <button id="start">Start Tracking</button>
-
   <h2>Observer Location</h2>
   <div>
     <label>Latitude: <input type="number" step="any" id="latInput"></label>
     <label>Longitude: <input type="number" step="any" id="lonInput"></label>
     <button id="setLocation">Set Location</button>
   </div>
-
   <h2>Status Log</h2>
   <pre id="log"></pre>
-
   <h2>Az/El Plot</h2>
   <canvas id="azelChart"></canvas>
-
   <h2>Map</h2>
   <div class="map-container">
     <div id="map"></div>
     <div id="footprintMap"></div>
   </div>
-
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(pos => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          document.getElementById('latInput').value = lat.toFixed(6);
-          document.getElementById('lonInput').value = lon.toFixed(6);
-          map.setView([lat, lon], 5);
-          observerGd.latitude = lat;
-          observerGd.longitude = lon;
-          log(`Using browser location: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
-        }, err => {
-          log('Geolocation error: ' + err.message);
-        });
-      } else {
-        log('Geolocation not supported by this browser.');
-      }
-      let port, writer, satrec, intervalId, chart, map, footprintMap;
+      let port, writer, satrec, intervalId, chart, map, footprintMap, satelliteMarker;
       let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
-      let aosMarker, losMarker, predictionLine, footprintTrailLine;
+      let aosMarker, losMarker, predictionLine, footprintTrailLine, homeMarker;
       let lastElevation = null;
       const trailCoords = [];
       const footprintTrailCoords = [];
@@ -143,6 +143,32 @@
         }
       });
 
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          document.getElementById('latInput').value = lat.toFixed(6);
+          document.getElementById('lonInput').value = lon.toFixed(6);
+          map.setView([lat, lon], 5);
+          observerGd.latitude = lat;
+          observerGd.longitude = lon;
+          homeMarker = L.marker([lat, lon], {
+            title: 'Home',
+            icon: L.icon({
+              iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
+              iconSize: [24, 24],
+              iconAnchor: [12, 24],
+              popupAnchor: [0, -24]
+            })
+          }).addTo(map).bindPopup('Observer Home Location').openPopup();
+          log(`Using browser location: ${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+        }, err => {
+          log('Geolocation error: ' + err.message);
+        });
+      } else {
+        log('Geolocation not supported by this browser.');
+      }
+
       function unwrapLongitudesPerOrbit(coords) {
         let adjusted = [];
         let lastLon = coords[0][1];
@@ -179,6 +205,14 @@
           footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
 
           footprintMap.setView([lat, lon]);
+
+          if (satelliteMarker) map.removeLayer(satelliteMarker);
+          satelliteMarker = L.circleMarker([lat, lon], {
+            radius: 5,
+            color: 'red',
+            fillColor: 'red',
+            fillOpacity: 1
+          }).addTo(map).bindPopup('Satellite Position');
 
           const altitude = geo.height;
           const earthRadius = 6371;
