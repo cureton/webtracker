@@ -120,39 +120,22 @@
         }
       });
 
-      document.getElementById('connect').addEventListener('click', async () => {
-        try {
-          port = await navigator.serial.requestPort();
-          await port.open({ baudRate: 9600 });
-          const encoder = new TextEncoderStream();
-          encoder.readable.pipeTo(port.writable);
-          writer = encoder.writable.getWriter();
-          log('Serial port connected');
-        } catch (err) {
-          log('Serial port error: ' + err);
+      function unwrapLongitudesPerOrbit(coords) {
+        let adjusted = [];
+        let lastLon = coords[0][1];
+        let wrapOffset = 0;
+        for (let i = 0; i < coords.length; i++) {
+          let [lat, lon] = coords[i];
+          if (i > 0) {
+            let delta = lon - lastLon;
+            if (delta > 300) wrapOffset -= 360;
+            if (delta < -300) wrapOffset += 360;
+          }
+          adjusted.push([lat, lon + wrapOffset]);
+          lastLon = lon;
         }
-      });
-
-      document.getElementById('setLocation').addEventListener('click', () => {
-        const lat = parseFloat(document.getElementById('latInput').value);
-        const lon = parseFloat(document.getElementById('lonInput').value);
-        if (!isNaN(lat) && !isNaN(lon)) {
-          observerGd.latitude = satellite.degreesToRadians(lat);
-          observerGd.longitude = satellite.degreesToRadians(lon);
-          log(`Observer location manually set to ${lat}, ${lon}`);
-        }
-      });
-
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          observerGd.latitude = satellite.degreesToRadians(pos.coords.latitude);
-          observerGd.longitude = satellite.degreesToRadians(pos.coords.longitude);
-          log(`Observer location auto-set to ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-          document.getElementById('latInput').value = pos.coords.latitude.toFixed(4);
-          document.getElementById('lonInput').value = pos.coords.longitude.toFixed(4);
-        },
-        () => log('Geolocation permission denied. Please set location manually.')
-      );
+        return adjusted;
+      }
 
       function setupTrackingLoop() {
         clearInterval(intervalId);
@@ -167,23 +150,14 @@
           const lat = satellite.degreesLat(geo.latitude);
           const lon = satellite.degreesLong(geo.longitude);
 
-          trailCoords.push([lat, lon]);
-          if (trailCoords.length > 200) trailCoords.shift();
-          if (trailLine) map.removeLayer(trailLine);
-          trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
-
           footprintTrailCoords.push([lat, lon]);
           if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
           if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
           footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
 
-          if (footprintMap && footprintCircle) {
-            footprintMap.setView([lat, lon]);
-          }
-
           const altitude = geo.height;
           const earthRadius = 6371;
-          const angularRadius = Math.acos((earthRadius / (earthRadius + altitude)));
+          const angularRadius = Math.acos(earthRadius / (earthRadius + altitude));
           const footprintRadiusKm = earthRadius * angularRadius;
 
           if (!subpointMarker) {
@@ -200,44 +174,6 @@
               radius: footprintRadiusKm * 1000,
               color: 'purple', fillColor: 'purple', fillOpacity: 0.2
             }).addTo(footprintMap);
-          }
-
-          const lookAngles = satellite.ecfToLookAngles(observerGd, satellite.eciToEcf(posVel.position, gmst));
-          const az = satellite.radiansToDegrees(lookAngles.azimuth);
-          const el = satellite.radiansToDegrees(lookAngles.elevation);
-
-          const azCmd = Math.round(az * 10).toString().padStart(4, '0');
-          const elCmd = Math.round(el * 10).toString().padStart(3, '0');
-          const command = `W${azCmd}${elCmd}\r`;
-          try {
-            if (writer && command) writer.write(command);
-          } catch (e) {
-            log('Failed to write to serial: ' + e.message);
-          }
-
-          const justAOS = lastElevation !== null && lastElevation <= 0 && el > 0;
-          const justLOS = lastElevation !== null && lastElevation > 0 && el <= 0;
-          lastElevation = el;
-
-          if (justAOS) {
-            if (aosMarker) map.removeLayer(aosMarker);
-            aosMarker = L.marker([lat, lon], {
-              icon: L.divIcon({ className: 'aos-icon', html: 'AOS', iconAnchor: [0, 0] })
-            }).addTo(map);
-            log(`AOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
-          }
-
-          if (justLOS) {
-            if (losMarker) map.removeLayer(losMarker);
-            losMarker = L.marker([lat, lon], {
-              icon: L.divIcon({ className: 'los-icon', html: 'LOS', iconAnchor: [0, 0] })
-            }).addTo(map);
-            log(`LOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
-          }
-
-          if (el > 0) {
-            chart.data.datasets[0].data.push({ x: az, y: el });
-            chart.update();
           }
         }, 1000);
       }
@@ -275,10 +211,12 @@
             const lon = satellite.degreesLong(geo.longitude);
             predictionCoords.push([lat, lon]);
           }
-          predictionLine = L.polyline(predictionCoords, { color: 'lime', dashArray: '4 6' }).addTo(map);
+
+          const unwrappedCoords = unwrapLongitudesPerOrbit(predictionCoords);
+          predictionLine = L.polyline(unwrappedCoords, { color: 'lime', dashArray: '4 6' }).addTo(map);
 
           setupTrackingLoop();
-          log('Tracking started');
+          log('Prediction drawn and tracking started');
         } catch (err) {
           log('Error parsing TLE: ' + err);
         }
