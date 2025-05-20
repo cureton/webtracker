@@ -10,8 +10,20 @@
   <style>
     body { font-family: sans-serif; }
     canvas { max-width: 500px; max-height: 500px; }
-    #map { height: 400px; width: 100%; margin-top: 10px; }
+    #map, #footprintMap { height: 400px; width: 100%; margin-top: 10px; }
     #log { white-space: pre-wrap; height: 150px; overflow-y: scroll; background: #eee; padding: 0.5em; }
+    .aos-icon, .los-icon {
+      font-weight: bold;
+      font-size: 14px;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      box-shadow: 0 0 4px rgba(0,0,0,0.5);
+      pointer-events: none;
+      user-select: none;
+    }
+    .aos-icon { background-color: green; }
+    .los-icon { background-color: red; }
   </style>
 </head>
 <body>
@@ -20,6 +32,7 @@
   <h2>Enter TLE</h2>
   <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
 2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
+  <label>Orbits to predict: <input type="number" id="orbitCount" min="1" max="5" value="1" /></label><br>
   <button id="connect">Connect to Rotator</button>
   <button id="start">Start Tracking</button>
 
@@ -39,18 +52,17 @@
   <h2>Ground Track</h2>
   <div id="map"></div>
 
+  <h2>Satellite Footprint</h2>
+  <div id="footprintMap"></div>
+
   <script>
-    let port, writer, satrec, intervalId, chart, map;
-    let satMarker, trailLine, observerMarker;
+    let port, writer, satrec, intervalId, chart, map, footprintMap;
+    let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
+    let aosMarker, losMarker, predictionLine;
+    let lastElevation = null;
     const trailCoords = [];
 
     let observerGd = { latitude: 0, longitude: 0, height: 0.02 };
-
-    // Setup map
-    map = L.map('map').setView([0, 0], 2);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: 'Map &copy; OpenStreetMap contributors'
-    }).addTo(map);
 
     function log(msg) {
       const el = document.getElementById('log');
@@ -66,10 +78,7 @@
         observerMarker.setLatLng([lat, lon]);
       } else {
         observerMarker = L.circleMarker([lat, lon], {
-          radius: 5,
-          color: 'red',
-          fillColor: '#f03',
-          fillOpacity: 0.8
+          radius: 5, color: 'red', fillColor: '#f03', fillOpacity: 0.8
         }).addTo(map).bindPopup("Observer");
       }
 
@@ -82,20 +91,19 @@
     document.getElementById('setLocation').addEventListener('click', () => {
       const lat = parseFloat(document.getElementById('latInput').value);
       const lon = parseFloat(document.getElementById('lonInput').value);
-      if (isNaN(lat) || isNaN(lon)) {
-        log("Invalid manual coordinates");
-        return;
-      }
-      setObserverLocation(lat, lon);
+      if (!isNaN(lat) && !isNaN(lon)) setObserverLocation(lat, lon);
     });
 
     navigator.geolocation.getCurrentPosition(
       (pos) => setObserverLocation(pos.coords.latitude, pos.coords.longitude),
-      () => {
-        log("Geolocation failed or denied. Please enter manually.");
-        setObserverLocation(-33.865143, 151.209900);
-      }
+      () => setObserverLocation(-33.865143, 151.209900)
     );
+
+    map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    footprintMap = L.map('footprintMap').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(footprintMap);
 
     document.getElementById('connect').addEventListener('click', async () => {
       port = await navigator.serial.requestPort();
@@ -108,90 +116,136 @@
 
     document.getElementById('start').addEventListener('click', () => {
       const lines = document.getElementById('tle').value.trim().split('\n');
-      if (lines.length < 2) {
-        log("Please enter a full 2-line TLE");
-        return;
-      }
-
+      if (lines.length < 2) return;
       satrec = satellite.twoline2satrec(lines[0], lines[1]);
+      const orbitCount = parseInt(document.getElementById('orbitCount').value) || 1;
+      drawPredictionPath(satrec, orbitCount);
       setupChart();
 
+      clearInterval(intervalId);
       intervalId = setInterval(() => {
         const now = new Date();
         const gmst = satellite.gstime(now);
         const posVel = satellite.propagate(satrec, now);
         if (!posVel.position) return;
 
-        const look = satellite.ecfToLookAngles(observerGd,
-                      satellite.eciToEcf(posVel.position, gmst));
-
+        const look = satellite.ecfToLookAngles(observerGd, satellite.eciToEcf(posVel.position, gmst));
         const az = satellite.radiansToDegrees(look.azimuth);
         const el = satellite.radiansToDegrees(look.elevation);
+
+        const justAOS = lastElevation !== null && lastElevation <= 0 && el > 0;
+        const justLOS = lastElevation !== null && lastElevation > 0 && el <= 0;
+        lastElevation = el;
+
+        const geo = satellite.eciToGeodetic(posVel.position, gmst);
+        const lat = satellite.degreesLat(geo.latitude);
+        const lon = satellite.degreesLong(geo.longitude);
+
+        if (justAOS) {
+          if (aosMarker) map.removeLayer(aosMarker);
+          aosMarker = L.marker([lat, lon], {
+            icon: L.divIcon({ className: 'aos-icon', html: 'AOS', iconAnchor: [0, 0] })
+          }).addTo(map);
+          log(`AOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
+        }
+
+        if (justLOS) {
+          if (losMarker) map.removeLayer(losMarker);
+          losMarker = L.marker([lat, lon], {
+            icon: L.divIcon({ className: 'los-icon', html: 'LOS', iconAnchor: [0, 0] })
+          }).addTo(map);
+          log(`LOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
+        }
 
         const azCmd = Math.round(az * 10).toString().padStart(4, '0');
         const elCmd = Math.round(el * 10).toString().padStart(3, '0');
         const command = `W${azCmd}${elCmd}\r`;
-
-        if (writer) {
-          writer.write(command);
-          log(`${now.toLocaleTimeString()} → AZ: ${az.toFixed(1)} EL: ${el.toFixed(1)} → ${command.trim()}`);
-        }
-
+        if (writer) writer.write(command);
         if (el > 0) {
           chart.data.datasets[0].data.push({ x: az, y: el });
           chart.update();
         }
 
-        const geo = satellite.eciToGeodetic(posVel.position, gmst);
-        const satLat = satellite.degreesLat(geo.latitude);
-        const satLon = satellite.degreesLong(geo.longitude);
-
         if (!satMarker) {
-          satMarker = L.circleMarker([satLat, satLon], {
-            radius: 4, color: 'blue', fillColor: 'cyan', fillOpacity: 0.9
-          }).addTo(map).bindPopup("Satellite");
+          satMarker = L.circleMarker([lat, lon], { radius: 4, color: 'blue', fillColor: 'cyan', fillOpacity: 0.9 }).addTo(map).bindPopup("Satellite");
         } else {
-          satMarker.setLatLng([satLat, satLon]);
+          satMarker.setLatLng([lat, lon]);
         }
 
-        trailCoords.push([satLat, satLon]);
+        trailCoords.push([lat, lon]);
         if (trailCoords.length > 200) trailCoords.shift();
         if (trailLine) map.removeLayer(trailLine);
         trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
+
+        const altitude = geo.height;
+        const earthRadius = 6371;
+        const minElevationRad = 0;
+        const angularRadius = Math.acos((earthRadius / (earthRadius + altitude)) * Math.cos(minElevationRad));
+        const footprintRadiusKm = earthRadius * angularRadius;
+
+        if (!subpointMarker) {
+          subpointMarker = L.circleMarker([lat, lon], { radius: 4, color: 'purple', fillColor: 'violet', fillOpacity: 0.9 }).addTo(footprintMap);
+        } else {
+          subpointMarker.setLatLng([lat, lon]);
+        }
+
+        if (footprintCircle) {
+          footprintCircle.setLatLng([lat, lon]);
+          footprintCircle.setRadius(footprintRadiusKm * 1000);
+        } else {
+          footprintCircle = L.circle([lat, lon], {
+            radius: footprintRadiusKm * 1000,
+            color: 'purple', fillColor: 'purple', fillOpacity: 0.2
+          }).addTo(footprintMap);
+        }
       }, 1000);
     });
+
+    function drawPredictionPath(satrec, orbitCount = 1) {
+      if (predictionLine) map.removeLayer(predictionLine);
+      const now = new Date();
+      const predictionCoords = [];
+      const stepSeconds = 10;
+      if (!satrec.no || satrec.no <= 0) {
+        log("Invalid or decayed TLE: mean motion is zero.");
+        return;
+      }
+      const orbitPeriodMinutes = 1440 / satrec.no;
+      const maxPredictionMinutes = Math.min(orbitPeriodMinutes * orbitCount, 180);
+      const totalSteps = Math.floor((maxPredictionMinutes * 60) / stepSeconds);
+      for (let i = 0; i <= totalSteps; i++) {
+        const time = new Date(now.getTime() + i * stepSeconds * 1000);
+        const gmst = satellite.gstime(time);
+        const posVel = satellite.propagate(satrec, time);
+        if (!posVel.position) continue;
+        const geo = satellite.eciToGeodetic(posVel.position, gmst);
+        const lat = satellite.degreesLat(geo.latitude);
+        const lon = satellite.degreesLong(geo.longitude);
+        predictionCoords.push([lat, lon]);
+      }
+      predictionLine = L.polyline(predictionCoords, {
+        color: 'green', dashArray: '5 5', weight: 2
+      }).addTo(map);
+      log(`Predicted orbit path drawn: ${maxPredictionMinutes.toFixed(1)} minutes`);
+    }
 
     function setupChart() {
       const ctx = document.getElementById('azelChart').getContext('2d');
       chart = new Chart(ctx, {
         type: 'scatter',
-        data: {
-          datasets: [{
-            label: 'Satellite Track',
-            data: [],
-            showLine: true,
-            borderWidth: 1,
-            pointRadius: 2
-          }]
-        },
+        data: { datasets: [{ label: 'Satellite Track', data: [], showLine: true, borderWidth: 1, pointRadius: 2 }] },
         options: {
           responsive: false,
           plugins: { legend: { display: false } },
           scales: {
             r: {
-              type: 'radialLinear',
-              min: 0,
-              max: 90,
+              type: 'radialLinear', min: 0, max: 90,
               ticks: { stepSize: 15 },
-              pointLabels: { callback: (value) => `${value}°` }
+              pointLabels: { callback: value => `${value}°` }
             },
-            x: { display: false },
-            y: { display: false }
+            x: { display: false }, y: { display: false }
           },
-          parsing: {
-            xAxisKey: 'x',
-            yAxisKey: 'y'
-          },
+          parsing: { xAxisKey: 'x', yAxisKey: 'y' },
           aspectRatio: 1,
         }
       });
