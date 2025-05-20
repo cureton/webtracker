@@ -1,108 +1,98 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>AlphaSpid Satellite Tracker</title>
-  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    body { font-family: sans-serif; }
-    canvas { max-width: 500px; max-height: 500px; }
-    #map, #footprintMap { height: 400px; width: 100%; margin-top: 10px; }
-    #log { white-space: pre-wrap; height: 150px; overflow-y: scroll; background: #eee; padding: 0.5em; }
-    .aos-icon, .los-icon {
-      font-weight: bold;
-      font-size: 14px;
-      color: white;
-      padding: 2px 6px;
-      border-radius: 4px;
-      box-shadow: 0 0 4px rgba(0,0,0,0.5);
-      pointer-events: none;
-      user-select: none;
-    }
-    .aos-icon { background-color: green; }
-    .los-icon { background-color: red; }
-    .map-container {
-      display: table;
-      width: 100%;
-    }
-    .map-cell {
-      display: table-cell;
-      width: 50%;
-      vertical-align: top;
-      padding-right: 10px;
-    }
-  </style>
-</head>
-<body>
-  <h1>AlphaSpid Satellite Tracker</h1>
+<script>
+  let port, writer, satrec, intervalId, chart, map, footprintMap;
+  let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
+  let aosMarker, losMarker, predictionLine, footprintTrailLine;
+  let lastElevation = null;
+  const trailCoords = [];
+  const footprintTrailCoords = [];
 
-  <h2>Enter TLE</h2>
-  <textarea id="tle" rows="3" cols="80">1 25544U 98067A   24140.59773148  .00005450  00000+0  10384-3 0  9994
-2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
-  <label>Orbits to predict: <input type="number" id="orbitCount" min="1" max="5" value="1" /></label><br>
-  <button id="connect">Connect to Rotator</button>
-  <button id="start">Start Tracking</button>
+  function setupTrackingLoop() {
+    clearInterval(intervalId);
+    intervalId = setInterval(() => {
+      const now = new Date();
+      const gmst = satellite.gstime(now);
+      const posVel = satellite.propagate(satrec, now);
+      if (!posVel.position) return;
 
-  <h2>Observer Location</h2>
-  <div>
-    <label>Latitude: <input type="number" step="any" id="latInput"></label>
-    <label>Longitude: <input type="number" step="any" id="lonInput"></label>
-    <button id="setLocation">Set Location</button>
-  </div>
+      const geo = satellite.eciToGeodetic(posVel.position, gmst);
+      const lat = satellite.degreesLat(geo.latitude);
+      const lon = satellite.degreesLong(geo.longitude);
 
-  <h2>Status Log</h2>
-  <pre id="log"></pre>
+      // Ground track for main map
+      trailCoords.push([lat, lon]);
+      if (trailCoords.length > 200) trailCoords.shift();
+      if (trailLine) map.removeLayer(trailLine);
+      trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
 
-  <h2>Az/El Plot</h2>
-  <canvas id="azelChart"></canvas>
+      // Ground track for footprint map
+      footprintTrailCoords.push([lat, lon]);
+      if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
+      if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
+      footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
 
-  <h2>Maps</h2>
-  <div class="map-container">
-    <div class="map-cell">
-      <h3>Ground Track</h3>
-      <div id="map"></div>
-    </div>
-    <div class="map-cell">
-      <h3>Satellite Footprint</h3>
-      <div id="footprintMap"></div>
-    </div>
-  </div>
+      // Draw satellite footprint
+      const altitude = geo.height;
+      const earthRadius = 6371; // km
+      const minElevationRad = 0;
+      const angularRadius = Math.acos((earthRadius / (earthRadius + altitude)) * Math.cos(minElevationRad));
+      const footprintRadiusKm = earthRadius * angularRadius;
 
-  <script>
-    let port, writer, satrec, intervalId, chart, map, footprintMap;
-    let satMarker, trailLine, observerMarker, footprintCircle, subpointMarker;
-    let aosMarker, losMarker, predictionLine, footprintTrailLine;
-    let lastElevation = null;
-    const trailCoords = [];
-    const footprintTrailCoords = [];
+      if (!subpointMarker) {
+        subpointMarker = L.circleMarker([lat, lon], { radius: 4, color: 'purple', fillColor: 'violet', fillOpacity: 0.9 }).addTo(footprintMap);
+      } else {
+        subpointMarker.setLatLng([lat, lon]);
+      }
 
-    function setupTrackingLoop() {
-      clearInterval(intervalId);
-      intervalId = setInterval(() => {
-        const now = new Date();
-        const gmst = satellite.gstime(now);
-        const posVel = satellite.propagate(satrec, now);
-        if (!posVel.position) return;
+      if (footprintCircle) {
+        footprintCircle.setLatLng([lat, lon]);
+        footprintCircle.setRadius(footprintRadiusKm * 1000);
+      } else {
+        footprintCircle = L.circle([lat, lon], {
+          radius: footprintRadiusKm * 1000,
+          color: 'purple', fillColor: 'purple', fillOpacity: 0.2
+        }).addTo(footprintMap);
+      }
 
-        const geo = satellite.eciToGeodetic(posVel.position, gmst);
-        const lat = satellite.degreesLat(geo.latitude);
-        const lon = satellite.degreesLong(geo.longitude);
+      // Calculate azimuth and elevation from observer
+      const lookAngles = satellite.ecfToLookAngles(
+        observerGd,
+        satellite.eciToEcf(posVel.position, gmst)
+      );
+      const az = satellite.radiansToDegrees(lookAngles.azimuth);
+      const el = satellite.radiansToDegrees(lookAngles.elevation);
 
-        trailCoords.push([lat, lon]);
-        if (trailCoords.length > 200) trailCoords.shift();
-        if (trailLine) map.removeLayer(trailLine);
-        trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
+      // Send command to AlphaSpid rotator
+      const azCmd = Math.round(az * 10).toString().padStart(4, '0');
+      const elCmd = Math.round(el * 10).toString().padStart(3, '0');
+      const command = `W${azCmd}${elCmd}\r`;
+      if (writer) writer.write(command);
 
-        footprintTrailCoords.push([lat, lon]);
-        if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
-        if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
-        footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
+      // AOS/LOS detection
+      const justAOS = lastElevation !== null && lastElevation <= 0 && el > 0;
+      const justLOS = lastElevation !== null && lastElevation > 0 && el <= 0;
+      lastElevation = el;
 
-      }, 1000);
-    }
-  </script>
-</body>
-</html>
+      if (justAOS) {
+        if (aosMarker) map.removeLayer(aosMarker);
+        aosMarker = L.marker([lat, lon], {
+          icon: L.divIcon({ className: 'aos-icon', html: 'AOS', iconAnchor: [0, 0] })
+        }).addTo(map);
+        log(`AOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
+      }
+
+      if (justLOS) {
+        if (losMarker) map.removeLayer(losMarker);
+        losMarker = L.marker([lat, lon], {
+          icon: L.divIcon({ className: 'los-icon', html: 'LOS', iconAnchor: [0, 0] })
+        }).addTo(map);
+        log(`LOS at ${lat.toFixed(2)}, ${lon.toFixed(2)} at ${now.toLocaleTimeString()}`);
+      }
+
+      // Update Az/El plot
+      if (el > 0) {
+        chart.data.datasets[0].data.push({ x: az, y: el });
+        chart.update();
+      }
+    }, 1000);
+  }
+</script>
