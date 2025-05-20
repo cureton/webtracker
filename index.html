@@ -81,7 +81,13 @@
 
     // ... [rest of JS code remains unchanged until trail update section]
 
-    // Add to your setInterval() inside the tracking update function:
+    // Inside setInterval() with corrected context:
+const now = new Date();
+const gmst = satellite.gstime(now);
+const posVel = satellite.propagate(satrec, now);
+if (!posVel.position) return;
+
+const geo = satellite.eciToGeodetic(posVel.position, gmst);
 const lat = satellite.degreesLat(geo.latitude);
 const lon = satellite.degreesLong(geo.longitude);
 
