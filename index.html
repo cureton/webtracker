@@ -79,29 +79,30 @@
     const trailCoords = [];
     const footprintTrailCoords = [];
 
-    // ... [rest of JS code remains unchanged until trail update section]
+    function setupTrackingLoop() {
+      clearInterval(intervalId);
+      intervalId = setInterval(() => {
+        const now = new Date();
+        const gmst = satellite.gstime(now);
+        const posVel = satellite.propagate(satrec, now);
+        if (!posVel.position) return;
 
-    // Inside setInterval() with corrected context:
-const now = new Date();
-const gmst = satellite.gstime(now);
-const posVel = satellite.propagate(satrec, now);
-if (!posVel.position) return;
+        const geo = satellite.eciToGeodetic(posVel.position, gmst);
+        const lat = satellite.degreesLat(geo.latitude);
+        const lon = satellite.degreesLong(geo.longitude);
 
-const geo = satellite.eciToGeodetic(posVel.position, gmst);
-const lat = satellite.degreesLat(geo.latitude);
-const lon = satellite.degreesLong(geo.longitude);
+        trailCoords.push([lat, lon]);
+        if (trailCoords.length > 200) trailCoords.shift();
+        if (trailLine) map.removeLayer(trailLine);
+        trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
 
-trailCoords.push([lat, lon]);
-if (trailCoords.length > 200) trailCoords.shift();
-if (trailLine) map.removeLayer(trailLine);
-trailLine = L.polyline(trailCoords, { color: 'blue' }).addTo(map);
+        footprintTrailCoords.push([lat, lon]);
+        if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
+        if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
+        footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
 
-footprintTrailCoords.push([lat, lon]);
-if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
-if (footprintTrailLine) footprintMap.removeLayer(footprintTrailLine);
-footprintTrailLine = L.polyline(footprintTrailCoords, { color: 'blue' }).addTo(footprintMap);
-
-// ... [rest of JS code continues unchanged]
+      }, 1000);
+    }
   </script>
 </body>
 </html>
