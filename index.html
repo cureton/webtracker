@@ -48,6 +48,7 @@
 2 25544  51.6417  45.6747 0003224  64.3883 295.7571 15.50685758445177</textarea><br>
   <label>Orbits to predict: <input type="number" id="orbitCount" min="1" max="5" value="1" /></label><br>
   <button id="connect">Connect to Rotator</button>
+  <span id="serialStatus" style="margin-left: 0.5em; font-weight: bold; color: #666;">Disconnected</span>
   <button id="start">Start Tracking</button>
   <h2>Observer Location</h2>
   <div>
@@ -82,6 +83,106 @@
         const el = document.getElementById('log');
         el.textContent += msg + '\n';
         el.scrollTop = el.scrollHeight;
+      }
+
+      function setSerialStatus(connected, message) {
+        const button = document.getElementById('connect');
+        const status = document.getElementById('serialStatus');
+
+        button.textContent = connected ? 'Disconnect Rotator' : 'Connect to Rotator';
+        status.textContent = message || (connected ? 'Connected at 115200' : 'Disconnected');
+        status.style.color = connected ? 'green' : '#666';
+      }
+
+      async function disconnectRotator() {
+        if (writer) {
+          writer.releaseLock();
+          writer = null;
+        }
+        if (port) {
+          await port.close();
+          port = null;
+        }
+        setSerialStatus(false, 'Disconnected');
+        log('Rotator disconnected');
+      }
+
+
+      function degToRad(deg) {
+        return deg * Math.PI / 180;
+      }
+
+      function radToDeg(rad) {
+        return rad * 180 / Math.PI;
+      }
+
+      function clampElevation(elDeg) {
+        return Math.max(0, Math.min(180, elDeg));
+      }
+
+      function formatGs232Command(azDeg, elDeg) {
+        const az = ((Math.round(azDeg) % 360) + 360) % 360;
+        const el = clampElevation(Math.round(elDeg));
+        return `W${String(az).padStart(3, '0')} ${String(el).padStart(3, '0')}\r\n`;
+      }
+
+      async function sendRotatorAzEl(azDeg, elDeg) {
+        if (!writer) return;
+        const command = formatGs232Command(azDeg, elDeg);
+        await writer.write(new TextEncoder().encode(command));
+        log(`Sent rotator command: ${command.replace(/\r?\n$/, '')}`);
+      }
+
+      document.getElementById('connect').addEventListener('click', async () => {
+        if (!('serial' in navigator)) {
+          setSerialStatus(false, 'Web Serial unavailable');
+          log('Web Serial is not available. Use Chrome/Edge over http://localhost or HTTPS.');
+          return;
+        }
+
+        try {
+          if (port) {
+            await disconnectRotator();
+            return;
+          }
+
+          setSerialStatus(false, 'Selecting port...');
+          port = await navigator.serial.requestPort();
+
+          await port.open({
+            baudRate: 115200,
+            dataBits: 8,
+            stopBits: 1,
+            parity: 'none',
+            flowControl: 'none'
+          });
+
+          writer = port.writable.getWriter();
+          setSerialStatus(true, 'Connected at 115200');
+          log('Rotator serial port opened at 115200 baud');
+        } catch (err) {
+          log('Serial connection failed: ' + err.message);
+          try {
+            if (writer) {
+              writer.releaseLock();
+              writer = null;
+            }
+            if (port) {
+              await port.close();
+              port = null;
+            }
+          } catch (_) {}
+          setSerialStatus(false, 'Disconnected');
+        }
+      });
+
+      if ('serial' in navigator) {
+        navigator.serial.addEventListener('disconnect', async () => {
+          writer = null;
+          port = null;
+          setSerialStatus(false, 'Disconnected');
+          log('Rotator serial port was disconnected');
+        });
       }
 
       map = L.map('map').setView([0, 0], 2);
@@ -132,8 +233,8 @@
           document.getElementById('latInput').value = lat.toFixed(6);
           document.getElementById('lonInput').value = lon.toFixed(6);
           map.setView([lat, lon], 5);
-          observerGd.latitude = lat;
-          observerGd.longitude = lon;
+          observerGd.latitude = degToRad(lat);
+          observerGd.longitude = degToRad(lon);
           observerMarker = L.circleMarker([lat, lon], {
             radius: 6,
             color: 'blue',
@@ -161,8 +262,8 @@
         const lat = parseFloat(document.getElementById('latInput').value);
         const lon = parseFloat(document.getElementById('lonInput').value);
         if (!isNaN(lat) && !isNaN(lon)) {
-          observerGd.latitude = lat;
-          observerGd.longitude = lon;
+          observerGd.latitude = degToRad(lat);
+          observerGd.longitude = degToRad(lon);
           if (observerMarker) map.removeLayer(observerMarker);
           observerMarker = L.circleMarker([lat, lon], {
             radius: 6,
@@ -216,6 +317,19 @@
           const geo = satellite.eciToGeodetic(posVel.position, gmst);
           const lat = satellite.degreesLat(geo.latitude);
           const lon = satellite.degreesLong(geo.longitude);
+
+          const ecf = satellite.eciToEcf(posVel.position, gmst);
+          const lookAngles = satellite.ecfToLookAngles(observerGd, ecf);
+          const azDeg = (radToDeg(lookAngles.azimuth) + 360) % 360;
+          const elDeg = radToDeg(lookAngles.elevation);
+
+          chart.data.datasets[0].data.push({ x: azDeg, y: elDeg });
+          if (chart.data.datasets[0].data.length > 600) chart.data.datasets[0].data.shift();
+          chart.update('none');
+
+          if (elDeg >= 0) {
+            sendRotatorAzEl(azDeg, elDeg).catch(err => log('Rotator write failed: ' + err.message));
+          }
 
           footprintTrailCoords.push([lat, lon]);
           if (footprintTrailCoords.length > 200) footprintTrailCoords.shift();
