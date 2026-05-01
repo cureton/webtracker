@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>AlphaSpid Satellite Tracker</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/1.3.0/satellite.min.js"></script>
+  <!-- satellite.js v7 is ESM-only; import it from jsDelivr in the module script below. -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -64,7 +64,9 @@
     <div id="map"></div>
     <div id="footprintMap"></div>
   </div>
-  <script>
+  <script type="module">
+    import * as satellite from "https://cdn.jsdelivr.net/npm/satellite.js@7.0.0/+esm";
+
     document.addEventListener('DOMContentLoaded', () => {
       let port, writer, satrec, intervalId, chart, map, footprintMap;
       let satelliteMarker, observerMarker, homeMarker;
