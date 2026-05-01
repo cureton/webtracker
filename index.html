@@ -65,7 +65,8 @@
     <div id="footprintMap"></div>
   </div>
   <script type="module">
-    import * as satellite from "https://cdn.jsdelivr.net/npm/satellite.js@7.0.0/+esm";
+    import * as satelliteModule from "https://cdn.jsdelivr.net/npm/satellite.js@7.0.0/+esm";
+    const satellite = satelliteModule.default ?? satelliteModule;
 
     document.addEventListener('DOMContentLoaded', () => {
       let port, writer, satrec, intervalId, chart, map, footprintMap;
@@ -210,7 +211,7 @@
           const now = new Date();
           const gmst = satellite.gstime(now);
           const posVel = satellite.propagate(satrec, now);
-          if (!posVel.position) return;
+          if (!posVel || !posVel.position) return;
 
           const geo = satellite.eciToGeodetic(posVel.position, gmst);
           const lat = satellite.degreesLat(geo.latitude);
@@ -281,7 +282,7 @@
             const future = new Date(now.getTime() + i * stepSeconds * 1000);
             const gmst = satellite.gstime(future);
             const pos = satellite.propagate(satrec, future);
-            if (!pos.position) continue;
+            if (!pos || !pos.position) continue;
             const geo = satellite.eciToGeodetic(pos.position, gmst);
             const lat = satellite.degreesLat(geo.latitude);
             const lon = satellite.degreesLong(geo.longitude);
